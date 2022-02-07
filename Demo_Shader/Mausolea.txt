@@ -1,0 +1,760 @@
+// https://www.shadertoy.com/view/ftcSWS
+// "Mausolea" by dr2 - 2021
+// License: Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+
+#version 330
+uniform float iTime;
+uniform vec4 iDate;
+uniform int iFrame;
+uniform vec2 iResolution;
+uniform vec2 iMouse;
+out vec4 fragColor;
+uniform sampler2D iChannel0;
+#define fragCoord gl_FragCoord.xy
+
+
+
+#define AA  0   // (= 0/1) optional antialiasing
+
+#if 1
+#define VAR_ZERO min (iFrame, 0)
+#else
+#define VAR_ZERO 0
+#endif
+
+float PrRoundBoxDf (vec3 p, vec3 b, float r);
+float PrRoundBox2Df (vec2 p, vec2 b, float r);
+float PrCylDf (vec3 p, float r, float h);
+float PrCapsDf (vec3 p, float r, float h);
+float PrConCylDf (vec3 p, vec2 cs, float r, float h);
+float PrConCapsDf (vec3 p, vec2 cs, float r, float h);
+float Maxv2 (vec2 p);
+float Minv2 (vec2 p);
+float SmoothMax (float a, float b, float r);
+float SmoothBump (float lo, float hi, float w, float x);
+mat3 StdVuMat (float el, float az);
+vec2 Rot2D (vec2 q, float a);
+vec3 HsvToRgb (vec3 c);
+vec2 Hashv2v2 (vec2 p);
+float Fbm1 (float p);
+float Fbm2 (vec2 p);
+vec3 VaryNf (vec3 p, vec3 n, float f);
+
+vec3 qHit, sunDir, lmpPos[3];
+vec2 gId, nSub, rfCs, lmpCs[3];
+float dstFar, tCur, bWid, bHt, trHt, gSize, lmpRot[3], lmpAz;
+int idObj;
+bool isDark;
+const int idFlr = 1, idRf = 2, idWall = 3, idCol = 4, idLit = 5, idPlat = 6, idRoad = 7, 
+   idTree = 8, idMvLmp = 9;
+const float pi = 3.1415927;
+
+#define DMINQ(id) if (d < dMin) { dMin = d;  idObj = id;  qHit = q; }
+
+void SetBldParm ()
+{
+  vec2 h;
+  h = Hashv2v2 (73.11 * gId + 0.1);
+  bWid = (0.15 + 0.1 * h.x) * gSize;
+  bHt = bWid * (0.75 + 0.25 * h.y);
+  if (h.y < 0.05) bHt = 0.;
+  trHt = 0.5 + 0.5 * bHt / (0.25 * gSize);
+  rfCs = sin (0.1 * (1. + bHt) * pi + vec2 (0.5 * pi, 0.));
+  h = Hashv2v2 (13.1 * gId + 0.1);
+  nSub = 1. + step (0.33, h) + 2. * step (0.67, h);
+}
+
+float GObjDf (vec3 p)
+{
+  vec3 q, ss;
+  vec2 bw;
+  float dMin, d, db, w, h;
+  dMin = dstFar;
+  q = p;
+  q.xz -= gSize * (gId + 0.5);
+  q.y -= 0.01;
+  d = PrRoundBoxDf (q, vec3 (vec2 (0.4075 * gSize), 0.01).xzy - 0.002 * gSize, 0.002 * gSize);
+  DMINQ (idPlat);
+  d = trHt * PrConCapsDf (vec3 ((abs (q.xz) - 0.39 * gSize) / trHt, q.y / trHt - 0.11),
+     sin (0.06 * pi + vec2 (0.5 * pi, 0.)), 0.03, 0.06);
+  DMINQ (idTree);
+  if (bHt > 0.) {
+    h = 2. * bHt / (nSub.x + nSub.y);
+    w = bWid / max (nSub.x, nSub.y);
+    q.y -= h + 0.005;
+    q.xz = mix (q.xz, abs (q.xz) - 0.2 * gSize, step (1.5, nSub));
+    q.xz = mix (q.xz, abs (q.xz) - 0.1 * gSize, step (2.5, nSub));
+    bw = bWid / nSub;
+    db = PrRoundBox2Df (q.xz, bw + 0.25 * w - 0.001 * w, 0.001 * w);
+    ss = vec3 (abs (q.xz) - 1.25 * bw, q.y - 1.05 * h).xzy;
+    d = abs (q.y + 0.95 * h) - 0.04 * h;
+    d = SmoothMax (d, db, 0.005);
+    DMINQ (idFlr);
+    d = (nSub.x != nSub.y) ? max (- ss.y - 0.1 * h,
+       dot (((nSub.x > nSub.y) ? ss.yx : ss.yz), rfCs)) : max (max (- ss.y - 0.1 * h,
+       dot (ss.yx, rfCs)), max (- ss.y - 0.1 * h, dot (ss.yz, rfCs)));
+    d = SmoothMax (d, db, 0.005);
+    DMINQ (idRf);
+    d = max (PrRoundBox2Df (q.xz, bw - 0.25 * w - 0.001 * w, 0.001 * w), abs (q.y) - h);
+    DMINQ (idWall);
+    d = min (PrCapsDf (vec3 (q.x, q.y - 0.6 * h, abs (q.z) - bw.y + 0.22 * w).yzx, 0.03 * w, 0.2 * w),
+       PrCapsDf (vec3 (abs (q.x) - bw.x + 0.22 * w, q.y - 0.6 * h, q.z), 0.03 * w, 0.2 * w));
+    DMINQ (idLit);
+    q.xz = mod (q.xz + 0.25 * w, 0.5 * w) - 0.25 * w;
+    d = max (PrCylDf (q.xzy, 0.1 * w, h), db);
+    DMINQ (idCol);
+  }
+  q = p;
+  d = q.y;
+  DMINQ (idRoad);
+  return dMin;
+}
+
+float GObjRay (vec3 ro, vec3 rd)
+{
+  vec3 p, rdi;
+  vec2 gIdP;
+  float dHit, d, eps;
+  if (rd.x == 0.) rd.x = 0.0001;
+  if (rd.z == 0.) rd.z = 0.0001;
+  rdi.xz = 1. / rd.xz;
+  gIdP = vec2 (-999.);
+  eps = 0.001;
+  dHit = eps;
+  for (int j = VAR_ZERO; j < 240; j ++) {
+    p = ro + dHit * rd;
+    gId = floor (p.xz / gSize);
+    if (gId != gIdP) {
+      gIdP = gId;
+      SetBldParm ();
+    }
+    d = GObjDf (p);
+    dHit += min (d, eps + max (0., Minv2 ((gSize * (gId + step (0., rd.xz)) - p.xz) * rdi.xz)));
+    if (d < eps || dHit > dstFar || p.y < 0.) break;
+  }
+  if (d >= eps) dHit = dstFar;
+  return dHit;
+}
+
+vec3 GObjNf (vec3 p)
+{
+  vec4 v;
+  vec2 e;
+  e = vec2 (0.001, -0.001);
+  for (int j = VAR_ZERO; j < 4; j ++) {
+    v[j] = GObjDf (p + ((j < 2) ? ((j == 0) ? e.xxx : e.xyy) : ((j == 2) ? e.yxy : e.yyx)));
+  }
+  v.x = - v.x;
+  return normalize (2. * v.yzw - dot (v, vec4 (1.)));
+}
+
+float GObjSShadow (vec3 ro, vec3 rd, float dMax)
+{
+  vec3 p;
+  vec2 gIdP;
+  float sh, d, h;
+  int idObjT;
+  idObjT = idObj;
+  sh = 1.;
+  gIdP = vec2 (-999.);
+  d = 0.01;
+  for (int j = VAR_ZERO; j < 40; j ++) {
+    p = ro + d * rd;
+    gId = floor (p.xz / gSize);
+    if (gId != gIdP) {
+      gIdP = gId;
+      SetBldParm ();
+    }
+    h = GObjDf (p);
+    sh = min (sh, smoothstep (0., 0.2 * d, h));
+    d += max (h, 0.01);
+    if (h < 0.001 || d > dMax) break;
+  }
+  idObj = idObjT;
+  return 0.5 + 0.5 * sh;
+}
+
+float ObjDf (vec3 p)
+{
+  vec3 q;
+  float dMin, d;
+  dMin = dstFar;
+  q = p - lmpPos[0];
+  q.y -= 0.07 - lmpPos[0].y;
+  q.yz = Rot2D (q.yz, -0.05 * pi);
+  q.xz = Rot2D (q.xz, lmpRot[0] + lmpAz);
+  q.z = - q.z;
+  d = PrConCylDf (q, sin (0.05 * pi + vec2 (0.5 * pi, 0.)), 0.01, 0.01);
+  DMINQ (idMvLmp);
+  q = (p - lmpPos[1]).xzy;
+  d = PrConCylDf (q, lmpCs[1], 0.03, 0.02);
+  DMINQ (idMvLmp);
+  q = (p - lmpPos[2]).xzy;
+  d = PrConCylDf (q, lmpCs[2], 0.03, 0.02);
+  DMINQ (idMvLmp);
+  return dMin;
+}
+
+float ObjRay (vec3 ro, vec3 rd)
+{
+  vec3 p;
+  float dHit, d;
+  dHit = 0.;
+  for (int j = VAR_ZERO; j < 120; j ++) {
+    p = ro + dHit * rd;
+    d = ObjDf (p);
+    if (d < 0.0002 || dHit > dstFar || p.y < 0.) break;
+    dHit += d;
+  }
+  if (p.y < 0.) dHit = dstFar;
+  return dHit;
+}
+
+vec3 ObjNf (vec3 p)
+{
+  vec4 v;
+  vec2 e;
+  e = vec2 (0.001, -0.001);
+  for (int j = VAR_ZERO; j < 4; j ++) {
+    v[j] = ObjDf (p + ((j < 2) ? ((j == 0) ? e.xxx : e.xyy) : ((j == 2) ? e.yxy : e.yyx)));
+  }
+  v.x = - v.x;
+  return normalize (2. * v.yzw - dot (v, vec4 (1.)));
+}
+
+float ObjSShadow (vec3 ro, vec3 rd, float dMax)
+{
+  float sh, d, h;
+  int idObjT;
+  idObjT = idObj;
+  sh = 1.;
+  d = 0.01;
+  for (int j = VAR_ZERO; j < 30; j ++) {
+    h = ObjDf (ro + d * rd);
+    sh = min (sh, smoothstep (0., 0.05 * d, h));
+    d += max (h, 0.01);
+    if (h < 0.001 || d > dMax) break;
+  }
+  idObj = idObjT;
+  return 0.7 + 0.3 * sh;
+}
+
+float TrObjDf (vec3 p)
+{
+  vec3 q;
+  float dMin, d;
+  dMin = dstFar;
+  q = (p - lmpPos[1]).xzy;
+  d = PrConCylDf (q, lmpCs[1], 0.03, 1.5);
+  DMINQ (idMvLmp);
+  q = (p - lmpPos[2]).xzy;
+  d = PrConCylDf (q, lmpCs[2], 0.03, 1.5);
+  DMINQ (idMvLmp);
+  return dMin;
+}
+
+float TrObjRay (vec3 ro, vec3 rd)
+{
+  float dHit, d;
+  dHit = 0.;
+  for (int j = VAR_ZERO; j < 40; j ++) {
+    d = TrObjDf (ro + dHit * rd);
+    if (d < 0.001 || dHit > dstFar) break;
+    dHit += d;
+  }
+  return dHit;
+}
+
+vec3 TrObjNf (vec3 p)
+{
+  vec4 v;
+  vec2 e;
+  e = vec2 (0.001, -0.001);
+  for (int j = VAR_ZERO; j < 4; j ++) {
+    v[j] = TrObjDf (p + ((j < 2) ? ((j == 0) ? e.xxx : e.xyy) : ((j == 2) ? e.yxy : e.yyx)));
+  }
+  v.x = - v.x;
+  return normalize (2. * v.yzw - dot (v, vec4 (1.)));
+}
+
+vec3 ShGrid (vec2 p, vec2 g, int stag)
+{
+  vec2 q, sq, ss;
+  q = p * g;
+  if (stag > 0 && 2. * floor (0.5 * floor (q.y)) != floor (q.y)) q.x += 0.5;
+  sq = smoothstep (0.02, 0.03, abs (fract (q + 0.5) - 0.5));
+  q = fract (q) - 0.5;
+  ss = 0.07 * pi * smoothstep (0.4, 0.47, abs (q.xy)) * sign (q.xy);
+  if (abs (q.x) < abs (q.y)) ss.x = 0.;
+  else ss.y = 0.;
+  return vec3 (ss.x, 0.8 + 0.2 * sq.x * sq.y, ss.y);
+}
+
+vec4 ObjCol (vec3 ro, vec3 rd, inout vec3 vn)
+{
+  vec4 col4, cBld;
+  vec3 rg;
+  vec2 h;
+  bool fxz;
+  h = Hashv2v2 (39.1 * gId + 0.1);
+  cBld = vec4 (HsvToRgb (vec3 (0.7 * h.x, 0.2, 0.6 + 0.2 * h.y)), 0.1);
+  if (idObj == idFlr) {
+    col4 = cBld;
+  } else if (idObj == idRf) {
+    col4 = cBld;
+  } else if (idObj == idWall) {
+    fxz = (abs (vn.x) > 0.99);
+    rg = ShGrid ((fxz ? qHit.zy : qHit.xy) * 32., vec2 (1., 1.5), 1);
+    col4 = cBld * rg.y;
+    rg.xz *= sign (fxz ? vn.x : vn.z);
+    if (fxz) {
+      if (rg.x == 0.) vn.xy = Rot2D (vn.xy, rg.z);
+      else vn.xz = Rot2D (vn.xz, rg.x);
+    } else {
+      if (rg.x == 0.) vn.zy = Rot2D (vn.zy, rg.z);
+      else vn.zx = Rot2D (vn.zx, rg.x);
+    }
+  } else if (idObj == idCol) {
+    col4 = cBld;;
+  } else if (idObj == idPlat) {
+    rg = ShGrid (32. * ro.xz, vec2 (1.), 0);
+    col4 = vec4 (0.5, 0.5, 0.5, 0.1) * rg.y;
+    if (vn.y > 0.99) {
+      if (rg.x == 0.) vn.yz = Rot2D (vn.yz, rg.z);
+      else vn.yx = Rot2D (vn.yx, rg.x);
+    }
+  } else if (idObj == idRoad) {
+    rg = ShGrid (16. * ro.xz, vec2 (1.), 0);
+    col4 = vec4 (0.3, 0.3, 0.35, 0.) * rg.y;
+    if (rg.x == 0.) vn.yz = Rot2D (vn.yz, rg.z);
+    else vn.yx = Rot2D (vn.yx, rg.x);
+  } else if (idObj == idTree) {
+    col4 = vec4 (0.1, 0.4, 0.1, 0.);
+  } else if (idObj == idLit) {
+    col4 = vec4 (1., 1., 0.7, -1.);
+  } else if (idObj == idMvLmp) {
+    col4 = (isDark && (qHit.z < -0.002 || qHit.z > -0.002 &&
+       abs (fract (8. * atan (qHit.y, - qHit.x) / (2. * pi) + 0.5) - 0.5) < 0.15)) ?
+       vec4 (0.7, 0.7, 0.5, -1.) : vec4 (0.8, 0.8, 0.3, 0.2);
+  }
+  return col4;
+}
+
+vec3 SkyBgCol (vec3 ro, vec3 rd)
+{
+  vec3 col, clCol, skCol;
+  vec2 q;
+  float f, fd, ff, sd;
+  skCol = (isDark ? 0.1 : 1.) * vec3 (0.4, 0.5, 0.8);
+  if (rd.y < 0.02 * Fbm1 (128. * mod (atan (rd.x, rd.z) / (2. * pi) + 0.625, 1.))) {
+    col = 0.9 * skCol;
+  } else {
+    q = 0.02 * (ro.xz + 2. * tCur + ((100. - ro.y) / rd.y) * rd.xz);
+    ff = Fbm2 (q);
+    f = smoothstep (0.2, 0.8, ff);
+    fd = smoothstep (0.2, 0.8, Fbm2 (q + 0.01 * sunDir.xz)) - f;
+    clCol = (0.7 + 0.5 * ff) * (vec3 (0.7) - 0.7 * vec3 (0.3, 0.3, 0.2) * sign (fd) *
+       smoothstep (0., 0.05, abs (fd)));
+    if (! isDark) {
+      sd = max (dot (rd, sunDir), 0.);
+      skCol = mix (skCol, vec3 (1., 1., 0.8), step (0.1, sd) *
+         0.2 * pow (sd, 128.) + 0.8 * pow (sd, 2048.));
+    } else clCol *= 0.3;
+    col = mix (skCol, clCol, 0.1 + 0.9 * f * smoothstep (0.01, 0.1, rd.y));
+  }
+  return col;
+}
+
+vec3 ShowScene (vec3 ro, vec3 rd)
+{
+  vec4 col4;
+  vec3 col, vn, roo, rdo, qHitG, ltPos, ltDir, ltAx;
+  vec2 vf;
+  float dstObjG, dstObj, dstTrObj, sh, a, ltDst, att;
+  int idObjG;
+  lmpCs[0] = sin (0.28 * pi + vec2 (0.5 * pi, 0.));
+  lmpCs[1] = sin (0.06 * pi + vec2 (0.5 * pi, 0.));
+  lmpCs[2] = sin (0.06 * pi + vec2 (0.5 * pi, 0.));
+  vf = vec2 (0.);
+  roo = ro;
+  rdo = rd;
+  dstObjG = GObjRay (ro, rd);
+  idObjG = idObj;
+  qHitG = qHit;
+  dstObj = isDark ? ObjRay (ro, rd) : dstFar;
+  if (dstObjG < min (dstObj, dstFar)) {
+    idObj = idObjG;
+    qHit = qHitG;
+    dstObj = dstObjG;
+  }
+  if (rd.y < 0. && min (dstObjG, dstObj) >= dstFar) {
+    dstObj = - ro.y / rd.y;
+    idObj = idRoad;
+  }
+  if (dstObj < dstFar) {
+    ro += dstObj * rd;
+    vn = (idObj == idObjG) ? GObjNf (ro) : ObjNf (ro);
+    col4 = ObjCol (ro, rd, vn);
+    if (idObj == idFlr || idObj == idWall) {
+      vf = vec2 (128., 0.2);
+    } else if (idObj == idCol) {
+      a = mod (16. * (atan (qHit.z, - qHit.x) / (2. * pi)), 1.);
+      vn.xz = Rot2D (vn.xz, -0.15 * pi * sin (pi * a * a));
+      vf = vec2 (128., 0.2);
+    } else if (idObj == idPlat) {
+      vf = vec2 (64., 0.5);
+    } else if (idObj == idTree) {
+      vf = vec2 (256., 2.);
+    } else if (idObj == idRoad) {
+      vf = vec2 (32., 1.);
+    }
+    if (vf.x > 0.) vn = VaryNf (vf.x * qHit, vn, vf.y);
+    if (isDark) {
+      ltPos = lmpPos[0];
+      ltAx = vec3 (0., 0., -1.);
+      ltAx.yz = Rot2D (ltAx.yz, 0.12 * pi);
+      ltAx.xz = Rot2D (ltAx.xz, - lmpRot[0] - lmpAz);
+      ltDir = ltPos - ro;
+      ltDst = length (ltDir);
+      ltDir /= ltDst;
+    } else {
+      ltDst = dstFar;
+      ltDir = sunDir;
+    }
+    sh = GObjSShadow (ro + 0.01 * vn, ltDir, ltDst);
+    if (isDark) sh = min (sh, ObjSShadow (ro + 0.01 * vn, vec3 (0., 1., 0.), ltDst));
+    if (col4.a >= 0.) {
+      if (isDark) {
+        att = smoothstep (-0.05, 0.05, dot (ltAx, ltDir) - lmpCs[0].x) *
+           step (- dot (vn, ltDir), 0.) / (1. + 0.01 * ltDst * ltDst);
+        att = min (att, sh);
+        col = col4.rgb * (0.1 + 0.1 * max (vn.y, 0.) + 0.8 * att * max (dot (vn, ltDir), 0.)) +
+           col4.a * step (0.95, sh) * pow (max (dot (ltDir, reflect (rd, vn)), 0.), 32.);
+        for (int k = 1; k <= 2; k ++) {
+          ltDir = lmpPos[k] - ro;
+          ltDst = length (ltDir);
+          ltDir /= ltDst;
+          ltAx = vec3 (0., 1., 0.);
+          att = smoothstep (-0.1, 0.1, dot (ltAx, ltDir) - lmpCs[k].x) *
+             step (- dot (vn, ltDir), 0.) / (1. + 0.002 * ltDst * ltDst);
+          col += att * (col4.rgb * max (dot (vn, ltDir), 0.) +
+             col4.a * pow (max (dot (ltDir, reflect (rd, vn)), 0.), 32.));
+        }           
+      } else {
+        col = col4.rgb * (0.2 + 0.1 * max (dot (vn.xz, - normalize (sunDir.xz)), 0.) +
+           0.8 * sh * max (dot (vn, sunDir), 0.)) +
+           col4.a * step (0.95, sh) * pow (max (dot (sunDir, reflect (rd, vn)), 0.), 32.);
+      }
+    } else col = col4.rgb * (0.6 - 0.4 * dot (vn, rd));
+    col = mix (col, SkyBgCol (roo, rd), smoothstep (0.5, 0.9, dstObj / dstFar));
+  } else col = SkyBgCol (ro, rd);
+  if (isDark) {
+    for (int k = 1; k <= 2; k ++) {
+      ro = roo;
+      rd = rdo;
+      dstTrObj = TrObjRay (ro, rd);
+      if (dstTrObj < min (dstObj, dstFar)) {
+        ro += dstTrObj * rd;
+        vn = TrObjNf (ro);
+        ltDst = length (lmpPos[k] - ro);
+        att = step (qHit.z, 0.) / (1. + 0.1 * ltDst * ltDst);
+        att *= max (- dot (vn, rd), 0.) * (1. - smoothstep (-0.2, -0.1, dstTrObj - min (dstObj, dstFar)));
+        if (att > 0.) col = mix (col, vec3 (1., 1., 0.8) * (1. + 16. * pow (Fbm2 (1024. *
+           vec2 (dot (qHit.yx, sin (atan (rd.z, - rd.x) + vec2 (0.5 * pi, 0.))),
+           qHit.z - 0.1 * tCur)), 16.)), 0.15 * att);
+      }
+    }
+  }
+  return clamp (col, 0., 1.);
+}
+
+vec3 TrackPath (float t)
+{ 
+  vec3 p;
+  float pLen, s, cCount;
+  pLen = 2.* gSize;
+  p.y = 0.;
+  s = mod (t, 11.);
+  if (s < 7.) p.xz = (s < 4.) ? vec2 (0., s) : vec2 (s - 4., 4.);
+  else p.xz = (s < 9.) ? vec2 (3., 11. - s) : vec2 (12. - s, 2.);
+  cCount = floor (t / 11.);
+  if (mod (cCount, 2.) == 0.) p.x *= -1.;
+  else p.x -= 1.;
+  p.z += 2. * cCount;
+  p.xz *= pLen ;
+  return p;
+}
+
+void FlyPR (float s, out vec3 p, out float az)
+{
+  vec3 fpF, fpB, vd;
+  float ds;
+  ds = 0.05;
+  fpF = TrackPath (s + ds);
+  fpB = TrackPath (s - ds);
+  vd = fpF - fpB;
+  p = 0.5 * (fpF + fpB);
+  az = 0.5 * pi - atan (vd.z, vd.x);
+}
+
+void main( void )
+{
+  mat3 flMat, vuMat;
+  vec4 mPtr, dateCur;
+  vec3 ro, rd, col;
+  vec2 canvas, uv, uvv, mMid, ut, mSize, msw;
+  float spd, el, az, zmFac, asp, sr, tPos;
+  int vuId, regId;
+  canvas = iResolution.xy;
+  uv = 2. * fragCoord.xy / canvas - 1.;
+  uv.x *= canvas.x / canvas.y;
+  tCur = iTime;
+  dateCur = iDate;
+  mPtr.xy = iMouse;
+  mPtr.xy = mPtr.xy / canvas - 0.5;
+  tCur = mod (tCur, 18000.) + 30. * floor (dateCur.w / 3600.);
+  asp = canvas.x / canvas.y;
+  mSize = (1./5.) * vec2 (asp, 1.);
+  mMid = vec2 (asp, 1.) * (1. - mSize.y) * vec2 (-1., -1.);
+  ut = abs (uv - mMid) - mSize;
+  regId = -1;
+  if (mPtr.z > 0.) {
+    regId = 0;
+    msw = 2. * mPtr.xy - mMid / vec2 (asp, 1.);
+    if (Maxv2 (abs (msw)) < mSize.y) {
+      regId = 1;
+      msw /= 2. * mSize.y;
+    }
+    if (regId == 0) msw = mPtr.xy;
+  }
+  vuId = 0;
+  if (Maxv2 (ut) < 0.) {
+    uv = (uv - mMid) / mSize.y;
+    vuId = 1;
+  }
+  if (regId > 0 && (vuId == 0 || vuId == regId)) vuId = regId - vuId;
+  isDark = (vuId == 0);
+  spd = 0.1;
+  tPos = spd * tCur;
+  gSize = 2.;
+  FlyPR (tPos + 0.1, lmpPos[0], lmpRot[0]);
+  FlyPR (tPos + 0.3, lmpPos[1], lmpRot[1]);
+  FlyPR (tPos - 0.3, lmpPos[2], lmpRot[2]);
+  lmpPos[0].y = 0.3;
+  lmpPos[1].y = 1.;
+  lmpPos[2].y = 1.;
+  FlyPR (tPos, ro, az);
+  ro.y = 0.2;
+  ro.xz += 0.001;
+  el = 0.;
+  lmpAz = 0.;
+  if (mPtr.z > 0.) {
+    lmpAz += 2. * pi * msw.x;
+    az += 2. * pi * msw.x;
+    el += 0.6 * pi * msw.y;
+  }
+  lmpAz = clamp (lmpAz, - 0.5 * pi, 0.5 * pi);
+  el = clamp (el, - 0.25 * pi, 0.25 * pi);
+  vuMat = StdVuMat (el - 0.03 * pi, az);
+  dstFar = 20.;
+  sunDir = normalize (vec3 (0.5, 1.5, -1.));
+  zmFac = 3.;
+#if ! AA
+  const float naa = 1.;
+#else
+  const float naa = 3.;
+#endif  
+  col = vec3 (0.);
+  sr = 2. * mod (dot (mod (floor (0.5 * (uv + 1.) * canvas), 2.), vec2 (1.)), 2.) - 1.;
+  for (float a = float (VAR_ZERO); a < naa; a ++) {
+    uvv = (uv + step (1.5, naa) * Rot2D (vec2 (0.5 / canvas.y, 0.), sr * (0.667 * a + 0.5) * pi)) / zmFac;
+    rd = vuMat * normalize (vec3 (2. * tan (0.5 * atan (uvv.x / asp)) * asp, uvv.y, 1.));
+    col += (1. / naa) * ShowScene (ro, rd);
+  }
+  if (mPtr.z > 0. && Maxv2 (abs (uv)) < 0.03 && Minv2 (abs (uv)) < 0.005)
+     col = mix (col, vec3 (1., 1., 1.), 0.2);
+  if (Maxv2 (ut) < 0. && Minv2 (abs (ut)) * canvas.y < 2.) col = vec3 (0.5, 0.5, 0.1);
+  fragColor = vec4 (col, 1.);
+}
+
+float PrRoundBoxDf (vec3 p, vec3 b, float r)
+{
+  return length (max (abs (p) - b, 0.)) - r;
+}
+
+float PrRoundBox2Df (vec2 p, vec2 b, float r)
+{
+  return length (max (abs (p) - b, 0.)) - r;
+}
+
+float PrCylDf (vec3 p, float r, float h)
+{
+  return max (length (p.xy) - r, abs (p.z) - h);
+}
+
+float PrCapsDf (vec3 p, float r, float h)
+{
+  return length (p - vec3 (0., 0., clamp (p.z, - h, h))) - r;
+}
+
+float PrConCylDf (vec3 p, vec2 cs, float r, float h)
+{
+  return max (dot (vec2 (length (p.xy) - r, p.z), cs), abs (p.z) - h);
+}
+
+float PrConCapsDf (vec3 p, vec2 cs, float r, float h)
+{
+  vec2 b;
+  float d;
+  d = max (dot (vec2 (length (p.xy) - r, p.z), cs), abs (p.z) - h);
+  h /= cs.x * cs.x;
+  r /= cs.x;
+  b = vec2 (r, h);
+  b *= cs.y;
+  p.z += b.x;
+  return min (d, min (length (p - vec3 (0., 0., h)) - r + b.y,
+     length (p - vec3 (0., 0., - h)) - r  - b.y));
+}
+
+float Maxv2 (vec2 p)
+{
+  return max (p.x, p.y);
+}
+
+float Minv2 (vec2 p)
+{
+  return min (p.x, p.y);
+}
+
+float SmoothMin (float a, float b, float r)
+{
+  float h;
+  h = clamp (0.5 + 0.5 * (b - a) / r, 0., 1.);
+  return mix (b - h * r, a, h);
+}
+
+float SmoothMax (float a, float b, float r)
+{
+  return - SmoothMin (- a, - b, r);
+}
+
+float SmoothBump (float lo, float hi, float w, float x)
+{
+  return (1. - smoothstep (hi - w, hi + w, x)) * smoothstep (lo - w, lo + w, x);
+}
+
+mat3 StdVuMat (float el, float az)
+{
+  vec2 ori, ca, sa;
+  ori = vec2 (el, az);
+  ca = cos (ori);
+  sa = sin (ori);
+  return mat3 (ca.y, 0., - sa.y, 0., 1., 0., sa.y, 0., ca.y) *
+         mat3 (1., 0., 0., 0., ca.x, - sa.x, 0., sa.x, ca.x);
+}
+
+vec2 Rot2D (vec2 q, float a)
+{
+  vec2 cs;
+  cs = sin (a + vec2 (0.5 * pi, 0.));
+  return vec2 (dot (q, vec2 (cs.x, - cs.y)), dot (q.yx, cs));
+}
+
+vec3 HsvToRgb (vec3 c)
+{
+  return c.z * mix (vec3 (1.), clamp (abs (fract (c.xxx + vec3 (1., 2./3., 1./3.)) * 6. - 3.) -
+     1., 0., 1.), c.y);
+}
+
+const float cHashM = 43758.54;
+
+float Hashfv2 (vec2 p)
+{
+  return fract (sin (dot (p, vec2 (37., 39.))) * cHashM);
+}
+
+vec2 Hashv2f (float p)
+{
+  return fract (sin (p + vec2 (0., 1.)) * cHashM);
+}
+
+vec2 Hashv2v2 (vec2 p)
+{
+  vec2 cHashVA2 = vec2 (37., 39.);
+  return fract (sin (dot (p, cHashVA2) + vec2 (0., cHashVA2.x)) * cHashM);
+}
+
+float Noiseff (float p)
+{
+  vec2 t;
+  float ip, fp;
+  ip = floor (p);
+  fp = fract (p);
+  fp = fp * fp * (3. - 2. * fp);
+  t = Hashv2f (ip);
+  return mix (t.x, t.y, fp);
+}
+
+float Noisefv2 (vec2 p)
+{
+  vec2 t, ip, fp;
+  ip = floor (p);  
+  fp = fract (p);
+  fp = fp * fp * (3. - 2. * fp);
+  t = mix (Hashv2v2 (ip), Hashv2v2 (ip + vec2 (0., 1.)), fp.y);
+  return mix (t.x, t.y, fp.x);
+}
+
+float Fbm1 (float p)
+{
+  float f, a;
+  f = 0.;
+  a = 1.;
+  for (int j = 0; j < 5; j ++) {
+    f += a * Noiseff (p);
+    a *= 0.5;
+    p *= 2.;
+  }
+  return f * (1. / 1.9375);
+}
+
+float Fbm2 (vec2 p)
+{
+  float f, a;
+  f = 0.;
+  a = 1.;
+  for (int j = 0; j < 5; j ++) {
+    f += a * Noisefv2 (p);
+    a *= 0.5;
+    p *= 2.;
+  }
+  return f * (1. / 1.9375);
+}
+
+float Fbmn (vec3 p, vec3 n)
+{
+  vec3 s;
+  float a;
+  s = vec3 (0.);
+  a = 1.;
+  for (int j = 0; j < 5; j ++) {
+    s += a * vec3 (Noisefv2 (p.yz), Noisefv2 (p.zx), Noisefv2 (p.xy));
+    a *= 0.5;
+    p *= 2.;
+  }
+  return dot (s, abs (n));
+}
+
+vec3 VaryNf (vec3 p, vec3 n, float f)
+{
+  vec4 v;
+  vec3 g;
+  vec2 e = vec2 (0.1, 0.);
+  for (int j = VAR_ZERO; j < 4; j ++)
+     v[j] = Fbmn (p + ((j < 2) ? ((j == 0) ? e.xyy : e.yxy) : ((j == 2) ? e.yyx : e.yyy)), n);
+  g = v.xyz - v.w;
+  return normalize (n + f * (g - n * dot (n, g)));
+}
+
+t (n, g)));
+}

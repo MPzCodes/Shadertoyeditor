@@ -1,0 +1,76 @@
+#version 330
+uniform float iTime;
+uniform vec2 iResolution;
+out vec4 fragColor;
+
+// vec3 egg_yellow =vec3(252./255., 195./255., 8./255.);
+vec3 egg_yellow = vec3(3./255., 252./255., 152./255.);
+//vec3 egg_yellow = vec3(0.,0.,0.);
+
+// multiplication of complex
+vec2 m(vec2 z1,vec2 z2){
+    float x =z1.x;
+    float y=z1.y;
+    float a = z2.x;
+    float b = z2.y;
+	   
+    return vec2(x*a-y*b,a*y+b*x);
+}
+
+vec3 colorRamp(float x){
+    x=pow(x,0.5);
+    
+    vec3 egg_yellow_ramp = vec3(x,x,0.)*egg_yellow;
+    vec3 egg_white =vec3(pow(x,.5));
+    return mix(egg_white,egg_yellow_ramp,x);
+}
+
+vec3 julia(vec2 z){
+    // 不同的c值 會有不同的圖案
+    // https://en.wikipedia.org/wiki/Julia_set
+    vec2 c=vec2(-0.15,0.666);
+    float R=10.0;
+    
+    float I =0.0;
+    float a=0.7;
+    const int L =20;
+    for(int i=0;i<L;++i){
+        
+        // 原廠Julia set
+        //z= m(z,z)+c;
+        
+        float rad=sin(4.*atan(z.y,z.x));
+        //float f =0.45+0.15*sin(iTime);
+        float f =0.45;
+        vec2 zz=m(z,z);
+        z= a*sin(f*rad*zz)+zz+c;
+        //z= a*sin(a*m(z,z))+m(z,z)+c;
+        
+        float r =length(z);
+        if(r>R ){
+            float t=I/float(L); 
+            return colorRamp(t);
+        }
+
+        I+=1.0;
+    }
+    
+    return egg_yellow;
+}
+
+
+
+void main( void ) {
+	 vec2  fragCoord = gl_FragCoord.xy;
+    // Normalized pixel coordinates (from -1 to 1)
+    vec2 uv = 2.*fragCoord/iResolution.xy-1.;
+
+    float scale=2.;
+    //float t =iTime;
+    //vec3 value=julia(uv*scale,vec2(-0.15+cos(t),0.666+sin(t)));
+    vec3 value=julia(uv*scale);
+    
+
+    // Output to screen
+    fragColor = vec4(value,1.0);
+}

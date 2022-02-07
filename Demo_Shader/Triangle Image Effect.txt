@@ -1,0 +1,187 @@
+// https://www.shadertoy.com/view/NldXDM
+//  Triangle Image Effect
+#version 330
+uniform float iTime;
+uniform int iFrame;
+uniform vec2 iResolution;
+uniform vec2 iMouse;
+out vec4 fragColor;
+uniform sampler2D iChannel0;
+#define fragCoord gl_FragCoord.xy
+
+
+
+/*
+PARAMETERS FEEL FREE TO CHANGE
+*/
+
+//Difference between triangles -> 0 - 1
+#define multiplier 0.71
+//Amount of traingles on X axis
+#define zoom 20.
+
+//position of the camera (can be an animation, dont place below 0)
+#define position vec2(85,483);
+
+//Lighting
+//strength of the lights
+#define normals 0.25
+//Direction of the light
+#define light vec2(2,1)
+
+//Uncomment to use iCHannel0 as source for colors
+//#define colFromImage
+
+//colors (can be animated)
+//only apply when colFromImage is undefined
+#define color0 vec3(1.0, 0.0, 1.0)
+#define color1 vec3(0.2157, 0.0, 1.0)
+#define color2 vec3(0.502, 0.9686, 1.0)
+#define color3 vec3(0.702, 0.4235, 0.2353)
+#define BG vec3(1,1,1)
+//Strength of the colors to be aplied to the BG
+#define strength 0.71
+
+
+/*
+CODE BEGINS HERE
+*/
+
+
+//https://stackoverflow.com/questions/4200224/random-noise-functions-for-glsl
+
+//const uint k = 1103515245U;  // GLIB C
+const uint k = 134775813U;   // Delphi and Turbo Pascal
+//const uint k = 1664525U;     // Numerical Recipes
+vec3 hash(uvec3 x)
+{
+    x = ((x>>8U)^x.yzx)*k;
+    x = ((x>>8U)^x.yzx)*k;
+    x = ((x>>8U)^x.yzx)*k;
+    return vec3(x)*(1.0/float(0xffffffffU)) * 2. - 1.;
+}
+
+
+
+
+
+#define lerp(from,to,x) (((to)-(from))*(x)+(from))
+#define map(from,to,fromX,toX,x) lerp((from),(to),((x)-(fromX))/((toX)-(fromX)))
+#define zFunc iTime
+//Gets the vertice at x,y with z time having passed
+//only value that is animated is z
+vec3 getVertice(vec3 pos) {
+    //give every tiangle a different time offset
+    float t = pos.z+hash(uvec3(pos.xy + 748.,0)).x;
+    //interpolate between current and next triangle position
+    vec3 a = hash(uvec3(pos.xy,floor(t))) * multiplier * 0.5 + 0.5;
+    vec3 b = hash(uvec3(pos.xy,ceil(t))) * multiplier * 0.5 + 0.5;
+    //make normals stronger
+    a.z *= normals;
+    b.z *= normals;
+    return lerp(a,b,fract(t));
+}
+
+//Gets the triangle that p will be in
+//x -> x quad
+//y -> y quad
+//z -> upper or lower triangle
+/*
+Each quad looks like this
+each + can be moved freely
+
++----+
+|\   |
+| \  |
+|  \ |
+|   \|
++----+
+
+*/
+
+uvec3 bindToTris(vec2 p) {
+    //current grid Tile
+    ivec2 floorP = ivec2(p);
+    //relative Position to Tile
+    vec2 modP = p-vec2(floorP);
+    //time
+    float z = zFunc;
+    //check in which quad we are relative to the middle of the current grid Tile
+    vec2 mid = getVertice(vec3(floorP,z)).xy;
+    ivec2 nextOffset = ivec2(mid.x < modP.x,mid.y < modP.y) * 2 - 1;
+
+    //check in which quad we are by looking if we are above/below and to the right/left of line between the dots
+    //that make up the current quad
+    vec2 yOff = getVertice(vec3(floorP.x, floorP.y + nextOffset.y, z)).xy;
+    vec2 xOff = getVertice(vec3(floorP.x + nextOffset.x, floorP.y, z)).xy;
+    float yLine = map(mid.x,yOff.x,mid.y,yOff.y+float(nextOffset.y),modP.y);
+    float xLine = map(mid.y,xOff.y,mid.x,xOff.x+float(nextOffset.x),modP.x);
+
+    ivec2 quad = ivec2(modP.x > yLine, modP.y > xLine);
+    
+    //check wether we are in the upper or lower triangle of the current quad
+    vec2 dOff0 = getVertice(vec3(floorP + quad + ivec2(-1, 0), z)).xy;
+    vec2 dOff1 = getVertice(vec3(floorP + quad + ivec2( 0,-1), z)).xy;
+
+    float dLine = map(dOff0.y+1.,dOff1.y,dOff0.x,dOff1.x+1.,modP.x+1.-float(quad.x))-1.+float(quad.y);
+    
+    //return the data for further use (mostly unusable as is)
+    return uvec3(quad+floorP,modP.y > dLine);
+}
+
+//returns the middle of the triangle given the data from bindToTris() and the height gradient
+
+vec4 getTriangle(uvec3 data) {
+    float z = zFunc;
+    int up = int(data.z);
+    //get all the different vertices
+    vec3 p1 = getVertice(vec3(vec2(data.xy)+vec2(0,-1),z)) + vec3(0,-1, 0);
+    vec3 p2 = getVertice(vec3(vec2(data.xy)+vec2(-1,0),z)) + vec3(-1, 0, 0);
+    vec3 p3 = getVertice(vec3(vec2(data.xy)+vec2(up-1,up-1),z)) + vec3(up-1,up-1,0);
+
+    //gradient from p1 to the other corners
+    vec3 gradient0 = p1-p2;
+    vec3 gradient1 = p1-p3;
+    vec3 g = cross(gradient0,gradient1);
+    //amount you need to move x and y to add 1 to z
+    g.xyz /= g.z;
+    
+    return vec4(((p1.xy+p2.xy+p3.xy)/3.)+vec2(data.xy),g.xy);
+}
+
+void main( void )
+ {
+    vec2 uv=fragCoord/iResolution.xx;
+    uv *= zoom;
+    uv += position;
+    
+    //standardize everything
+    vec3 interpCol0 = color0;
+    vec3 interpCol1 = color1;
+    vec3 interpCol2 = color2;
+    vec3 interpCol3 = color3;
+    //get triangle under current pixel and immediately turn into usable data
+    vec4 Triangle = getTriangle(bindToTris(uv));
+    Triangle.xy -= position;
+    Triangle.xy /= zoom;
+
+    vec3 cur;
+
+#ifdef colFromImage
+    cur = texture(iChannel0,Triangle.xy).xyz;
+#else
+    //interpolate the colors
+    float l0 = clamp((1.-distance(Triangle.xy,vec2(0,0)))*strength,0.,1.);
+    float l1 = clamp((1.-distance(Triangle.xy,vec2(0,1)))*strength,0.,1.);
+    float l2 = clamp((1.-distance(Triangle.xy,vec2(1,0)))*strength,0.,1.);
+    float l3 = clamp((1.-distance(Triangle.xy,vec2(1,1)))*strength,0.,1.);
+    cur = lerp(BG,interpCol0,l0);
+    cur = lerp(cur,interpCol1,l1);
+    cur = lerp(cur,interpCol2,l2);
+    cur = lerp(cur,interpCol3,l3);
+#endif
+    //calculate lighting through dot product between lighting normal and triangle normal
+    cur *= dot(Triangle.zw,normalize(light))/2.+1.;
+
+    fragColor = vec4(cur,1);
+}

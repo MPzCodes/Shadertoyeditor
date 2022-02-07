@@ -1,0 +1,63 @@
+// https://www.shadertoy.com/view/NltSRX
+//  Avengers Flag
+#version 330
+uniform float iTime;
+uniform int iFrame;
+uniform vec2 iResolution;
+uniform vec2 iMouse;
+out vec4 fragColor;
+uniform sampler2D iChannel0;
+#define fragCoord gl_FragCoord.xy
+
+#define BLUR 2e-3
+
+vec3 BLACK = vec3(.245, .25, .18);
+vec3 WHITE = vec3(.8, .85, .95);
+vec3 BLUE = vec3(.3, .3, .5);
+
+float Rectangle(vec2 uv, float b, float t, float l, float r)
+{
+    float band1 = smoothstep(b, b + BLUR, uv.y) * smoothstep(t, t - BLUR, uv.y);
+    float band2 = smoothstep(l, l + BLUR, uv.x) * smoothstep(r, r - BLUR, uv.x);
+    return band1 * band2;
+}
+
+float Circle(vec2 uv, vec2 p, float r)
+{
+    float d = length(uv - p);
+    return smoothstep(r, r - BLUR, d);
+}
+
+vec3 Flag(vec2 uv)
+{    
+    float thickness = .115;
+    float d = Rectangle(vec2(uv.x - uv.y * .48, uv.y), -.35, .44, -.15, -.15 + thickness);
+    d = max(d, Rectangle(uv, -.18, .44, .06, .06 + thickness)); 
+    d = max(d, Rectangle(uv, -.11, -.12 + thickness, -.1, .05 + thickness));   
+    
+    float circle1 = Circle(uv, vec2(.0), .32); 
+    float circle2 = Circle(uv, vec2(.0), .255);
+    float rectOutline1 = Rectangle(vec2(uv.x - uv.y * .48, uv.y), -.35, .44, -.165, -.135 + thickness);
+    float rectOutline2 = Rectangle(uv, 0., .44, .045, .075 + thickness);
+    d = max(d, max(0., circle1-circle2-rectOutline1-rectOutline2));
+    
+    d = max(0., d - Rectangle(vec2(uv.x + abs((uv.y + .06) * 1.15), uv.y), -.2, .08, .17, .192));
+    
+    vec3 col = mix(BLACK, BLUE, texture(iChannel0, uv).r);
+    col = mix(col, WHITE, d);
+    col *= smoothstep(BLUR, 0., abs(uv.y) - .5 + BLUR);
+    return col;
+}
+
+ void main( void )
+
+{
+    vec2 uv = (fragCoord - .5 * iResolution.xy) /iResolution.y;
+    float t =  uv.x * 8. - 1.8 * iTime + uv.y * 2.8;
+    uv.y += sin(t) * .055;
+    vec3 col = Flag(uv);    
+    col *= .7 + cos(t) * .3;    
+    fragColor = vec4(col,1.0);
+}
+
+

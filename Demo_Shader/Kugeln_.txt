@@ -1,0 +1,164 @@
+//https://www.shadertoy.com/view/4sXBzj
+
+
+const float MAX_DIST = 100.0;
+const float EPSILON = 0.0001;
+
+float plane(vec3 pos){
+    return pos.y;
+}
+
+float sphere(vec3 pos, float radius){
+    return length(pos) - radius;
+}
+
+float repeat(float coord, float spacing) {
+    return mod(coord, spacing) - spacing*0.5;
+}
+
+vec2 scene(vec3 camPos){
+    float dist = 0.;
+    float materialID = 0.;
+    
+    vec3 q = vec3(camPos+vec3(0., -0.6, 0.));
+    q.x = repeat(q.x, sin(iTime)*0.5 + 1.5);
+    q.z = repeat(q.z, sin(iTime)*0.5 + 1.5);
+    
+    
+    float obj1 = sphere(q, 0.3);
+    float obj2 = plane(camPos);
+    
+    dist = obj1;
+    materialID = 1.0;
+    
+    if(obj2 < obj1){
+        dist = obj2;
+        materialID = 2.0;
+    }
+        
+    return vec2(dist, materialID);
+}
+
+
+mat3 setCamera(vec3 ro, vec3 ta, float cr )
+{
+	vec3 cw = normalize(ta-ro);
+	vec3 cp = vec3(sin(cr), cos(cr),0.0);
+	vec3 cu = normalize( cross(cw,cp) );
+	vec3 cv = normalize( cross(cu,cw) );
+    return mat3( cu, cv, cw );
+}
+
+
+
+
+vec2 trace(vec3 camPos, vec3 camTarget){
+    float td = 0.1;
+    float mat = -1.0;
+    
+    for(int i=0;i<1024;i++){
+        float pres = EPSILON * td;
+        vec2 result = scene(camPos + camTarget * td);
+        if(result.x < pres || td > MAX_DIST){
+           break;
+        }
+        td += result.x;  
+        mat = result.y;
+    }
+    
+    if(td>MAX_DIST){
+        mat = -1.0;
+    }
+    return vec2(td, mat);
+}
+
+vec3 calcNorm(vec3 pos){
+    vec2 eps = vec2(0.001, 0.0);
+    vec3 norm = vec3(
+        scene(pos+eps.xyy).x - scene(pos-eps.xyy).x,
+        scene(pos+eps.yxy).x - scene(pos-eps.yxy).x,
+        scene(pos+eps.yyx).x - scene(pos-eps.yyx).x);
+    return normalize(norm);
+        
+}
+
+float getReflect(vec3 ro, vec3 rd )
+{
+	float res = 1.0;
+    float t = 0.02;
+    for( int i=0; i<16; i++ )
+    {
+		float h = scene( ro + rd*t ).x;
+        res = min( res, 8.0*h/t );
+        t += clamp( h, 0.02, 0.10 );
+        if( h<0.001 || t>2.5 ) break;
+    }
+    return clamp( res, 0.0, 1.0 );
+}
+
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+	
+    vec2 uv = (-iResolution.xy + 2.0*(fragCoord))/iResolution.y;
+    vec2 mo = iMouse.xy / iResolution.xy;
+    
+    vec3 outColor = vec3(0.);
+    
+    float time = iTime;
+    
+    vec3 camOrigin = vec3( -0.5+3.5*cos(0.1*time + 3.0*mo.x), 1.0 + 2.0*mo.y, 0.5 + 4.0*sin(0.1*time + 4.0*mo.x) );
+    vec3 camTarget = vec3( 0.0, 0.4, 0.0 );
+    mat3 ca = setCamera( camOrigin, camTarget, 0.0 );
+    vec3 camDir = ca * normalize( vec3(uv.xy,1.8) );
+    
+    vec3 lightDir = normalize(vec3(0.0, 1.0, 0.0));
+    
+    vec2 result = trace(camOrigin, camDir);
+    
+    vec3 pos = camOrigin + result.x * camDir;
+    
+    vec3 norm = calcNorm(pos);
+    float dif = clamp( dot( norm, lightDir ), 0.0, 1.0 );
+    float amb = clamp( 0.5+0.5*norm.y, 0.0, 1.0 );
+    vec3 ref = reflect(camDir, norm);    
+    float dom = smoothstep(-0.1, 0.1, ref.y);
+    dom *= getReflect(pos, ref);
+    
+    vec3 matColor = vec3(0.);
+    if(result.y == 1.0){
+        vec3 col = vec3(0.9, 0.2, 0.2);
+        
+        vec3 lin = vec3(0.);
+        lin += 1.3 * dif;
+        lin += 0.8 * amb;
+        lin += 0.5 * dom;
+        
+        col = col * lin;
+        matColor = col;
+        
+       
+    }
+    
+    if(result.y == 2.0){
+        vec3 f = vec3(mod(floor(pos.x*5.)+floor(pos.z*5.), 2.));
+        vec3 color = 0.4 + 0.3*f*vec3(0.5);
+     
+        vec3 fl = texture(iChannel0, pos.xz).rgb;
+
+        
+        vec3 lin = vec3(0.);
+        lin += 1.2 * dif;
+        lin += 0.5 * dom;
+        
+        color = color * lin;
+        
+        matColor = vec3(color);
+    }
+   	
+    float fogAmount = exp( -(clamp(pos.y-300.0, 0.0, 300000000.0))* 0.01 );
+ 
+	outColor = mix(vec3(1.), matColor, fogAmount);
+    
+	fragColor = vec4(outColor ,1.0);
+}

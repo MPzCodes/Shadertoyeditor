@@ -1,0 +1,116 @@
+// https://www.shadertoy.com/view/tllcWN
+// Spiral Cat
+
+#version 330
+uniform float iTime;
+uniform vec2 iResolution;
+uniform vec2 iMouse;
+out vec4 fragColor;
+uniform sampler2D iChannel0;
+
+
+const float PI =3.1415;
+const float L=0.01;
+vec2 getHelix(float theda,vec2 center)
+{
+    float t = theda/(2.0*PI);
+    return (L*(t*t*t))*vec2(cos(theda),sin(theda));
+}
+
+const int maxPiece =10;
+//split Spiral to many piece , each piece is 360 degree
+float findNowPieceRatio(vec2 nowVector,float theda,vec2 center)
+{
+    vec2 oldRef= vec2(0.0,0.0);
+    for(int fI=0;fI<maxPiece;fI++)
+    {
+        // in this piece ?
+        vec2 nowRef =getHelix(theda+float(fI)*2.0*PI,center);
+        float n=length(nowVector);
+        float R =length(nowRef);
+        if(n<R)
+        {
+            float r =length(oldRef);
+            float ratio = (n-r)/(R-r);
+            return ratio;
+        }
+        oldRef = nowRef;
+    }    
+    return 0.0;
+}
+
+vec2 bigCircleCenter=vec2(0.5,0.5);
+float R=0.5;
+
+float nearestDistanceInCircle(vec2 p)
+{
+    return (R-length(p-bigCircleCenter));
+}
+
+vec2 findIntersectWichCircle(vec2 p,vec2 dir)
+{
+    for(int i=0;i<5;i++)
+    {
+        float moveDis=nearestDistanceInCircle(p);
+        p = p+dir*moveDis;
+        if(R-length(p-bigCircleCenter)<0.000001)
+            return p;
+    }
+    return p;
+}
+
+float r=0.1;
+vec2 smallCircleCenter =vec2(0.5,0.5);
+
+vec4 render(vec2 uv)
+{
+    vec2 dir=uv-smallCircleCenter;
+    float theda =mod(atan(dir.y,dir.x)+2.0*PI+3.0*iTime,2.0*PI);
+    
+    float ratio = findNowPieceRatio(dir,theda,smallCircleCenter);
+
+    
+    float c =ratio;
+    //peak ratio
+    //return vec4(c,c,c,1.0f);
+    
+    dir = normalize(dir);
+    //find Intersect with big Circle
+    vec2 pOnCircle =findIntersectWichCircle(smallCircleCenter,dir);
+    float lineL=length(pOnCircle-smallCircleCenter)-r;
+
+    vec2 fetchUV=smallCircleCenter+dir*(r+lineL*ratio);
+    return vec4(c,c,c,1.0)*texture(iChannel0,fetchUV);      
+}
+
+vec2 uvDeform(vec2 uv)
+{
+    //find ray hit point
+    float depth =5.0;
+    vec3 planeCenter = vec3(smallCircleCenter,depth);
+    float strength=6.0;
+    vec2 target = strength*vec2(cos(iTime/2.0),sin(iTime/2.0));
+    vec3 planeNormal = vec3(target,-1.0);
+    planeNormal = normalize(planeNormal);
+    
+	vec3 rayFrom =vec3(uv,0.0);
+    vec3 ray =vec3(0.0,0.0,1.0);
+    
+    float t = dot((planeCenter-rayFrom),planeNormal)/(dot(ray,planeNormal));
+    
+    vec3 hitPoint =rayFrom +t*ray;
+    hitPoint = hitPoint- vec3(bigCircleCenter,0.0);
+    
+    //project to plane z=1
+    hitPoint = hitPoint/hitPoint.z;
+    return hitPoint.xy*depth+bigCircleCenter; 
+    //return uv;
+}
+
+void main( void ) {
+	 vec2  fragCoord = gl_FragCoord.xy;
+    float moveR=0.2;
+    smallCircleCenter = bigCircleCenter+moveR*vec2(cos(-iTime/4.0),sin(-iTime/2.0));
+	vec2 uv = fragCoord.xy / iResolution.xy;
+    fragColor = render(uvDeform(uv));
+}
